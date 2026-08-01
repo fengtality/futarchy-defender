@@ -61,7 +61,66 @@ docker exec -it umbra-hummingbot ./bin/hummingbot_quickstart.py
   ```
 
 `status` shows the fight (TWAP margin vs the pass line), your budget and runway, and
-the **payoff matrix** — what your position redeems to *if it fails* vs *if it passes*.
+the **payoff matrix** — what your position redeems to *if it fails* vs *if it passes*:
+
+```text
+  Futarchy Defense    target=FAIL    RESPONDING (sampled -0.30%)
+  Proposal 8sysa3XP…    TWAP window: OPEN · 43h16m left
+  Last action: SELL 45.00 PASS-base
+
+  DECISION  (passes if PASS TWAP beats FAIL TWAP by +3%)
++-------------------------------+----------------------+
+| Signal                        | Value                |
+|-------------------------------+----------------------|
+| Outcome if resolved now       | FAIL  [DEFENDED]     |
+| Realized TWAP margin vs line  | -2.41%               |
+| Sampled (live) margin vs line | -0.30%               |
+| Moved since first response    | +1.90% in our favor  |
++-------------------------------+----------------------+
+
+  MARKETS
++--------------+------------------+
+| Market       | Price / Spread   |
+|--------------+------------------|
+| PASS         | $0.3160          |
+| FAIL         | $0.3245          |
+| pass vs fail | -2.62%           |
++--------------+------------------+
+
+  BUDGET & PACING  (one slot every 30 min · runway: OK — lasts to close)
++---------+----------+--------+-------------+-------------+
+| Asset   |   Budget |   Used |   Remaining |   This slot |
+|---------+----------+--------+-------------+-------------|
+| UMBRA   |     2000 |    135 |        1865 |        21.4 |
+| USDC    |      300 |     42 |         258 |         3   |
++---------+----------+--------+-------------+-------------+
+
+  ACTIVITY
++---------------------+---------+
+| Metric              |   Value |
+|---------------------+---------|
+| Responses           |       3 |
+| PASS-base sold      |     135 |
+| FAIL-base bought    |     130 |
+| Quote spent on buys |      42 |
++---------------------+---------+
+  Recent trades:
++-----+--------+----------+--------+---------+-----------+
+|   # | Side   | Market   |   Size |   Quote | Tx        |
+|-----+--------+----------+--------+---------+-----------|
+|   1 | SELL   | PASS     |     45 |   14.2  | 4rNT31m2… |
+|   2 | BUY    | FAIL     |     60 |   18.1  | 2Pra1cY3… |
+|   3 | SELL   | PASS     |     45 |   14.05 | 51qrekfr… |
++-----+--------+----------+--------+---------+-----------+
+
+  PAYOFF OF POSITION NOW  (conditional tokens redeem per outcome)
++---------------+---------+--------+
+| If proposal   |   UMBRA | USDC   |
+|---------------+---------+--------|
+| FAILS (goal)  |    2730 | $2     |
+| PASSES        |    2465 | $260   |
++---------------+---------+--------+
+```
 
 **4. Leave it running / stop**
 
