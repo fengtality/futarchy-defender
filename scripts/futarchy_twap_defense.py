@@ -4,8 +4,10 @@ import time
 from decimal import Decimal
 from typing import Dict, Optional
 
+import pandas as pd
 from pydantic import Field
 
+from hummingbot.client.ui.interface_utils import format_df_for_printout
 from hummingbot.connector.connector_base import ConnectorBase
 from hummingbot.core.data_type.common import MarketDict
 from hummingbot.core.gateway.gateway_http_client import GatewayHttpClient
@@ -106,6 +108,8 @@ class FutarchyTwapDefense(StrategyV2Base):
         self._acquired_base = Decimal("0")   # winning-side base bought
         self._responses = 0
         self._first_margin: Optional[Decimal] = None
+        self._trades: list = []          # log of executed trades for the status table
+        self._last_status_log = 0.0      # heartbeat: log full status every deploy_interval_min
 
     # -------------------------------------------------------------- clock
 
@@ -118,11 +122,19 @@ class FutarchyTwapDefense(StrategyV2Base):
     async def _poll(self):
         try:
             await self._check_and_react()
+            self._maybe_log_status()
         except Exception as e:
             self.logger().error(f"poll error: {e}", exc_info=True)
         finally:
             self._next_poll = time.time() + self.config.poll_interval_sec
             self._busy = False
+
+    def _maybe_log_status(self):
+        # Heartbeat: write the full status board to the log every deploy_interval_min.
+        interval = max(60, self.config.deploy_interval_min * 60)
+        if time.time() - self._last_status_log >= interval:
+            self._last_status_log = time.time()
+            self.logger().info("Periodic status:\n" + self.format_status())
 
     # -------------------------------------------------------------- core
 
@@ -224,9 +236,9 @@ class FutarchyTwapDefense(StrategyV2Base):
                     self._note(f"[DRY] SELL {size} {self._sell_market}-base (slot {base_slot:.1f})")
                 else:
                     r = await self._swap(gw, self._sell_market, "SELL", size)
-                    self._proceeds_quote += Decimal(str(r["data"]["amountOut"]))
-                    self._note(f"SOLD {size} {self._sell_market}-base -> {r['data']['amountOut']:.2f} quote "
-                               f"({r['signature'][:12]}...)")
+                    out = Decimal(str(r["data"]["amountOut"]))
+                    self._proceeds_quote += out
+                    self._log_trade("SELL", self._sell_market, size, out, r["signature"])
                 self._base_used += size
                 return True
 
@@ -250,7 +262,7 @@ class FutarchyTwapDefense(StrategyV2Base):
                 paid = Decimal(str(r["data"]["amountIn"]))
                 self._quote_used += paid
                 self._acquired_base += base_out
-                self._note(f"BOUGHT {base_out} {self._buy_market}-base for {paid:.2f} quote ({r['signature'][:12]}...)")
+                self._log_trade("BUY", self._buy_market, base_out, paid, r["signature"])
                 return True
 
         self._note(f"THREAT but budget exhausted / no ammo (need {self._sell_market}-base or {self._buy_market}-quote)")
@@ -330,6 +342,16 @@ class FutarchyTwapDefense(StrategyV2Base):
         self._last_action = msg
         self.logger().info(msg)
 
+    def _log_trade(self, side: str, market: str, size: Decimal, counter: Decimal, sig: str):
+        # side: SELL/BUY. counter: quote received (SELL) or quote paid (BUY).
+        self._trades.append({"side": side, "market": market, "size": size, "counter": counter, "sig": sig})
+        verb = "received" if side == "SELL" else "paid"
+        self._last_action = f"{side} {size:.2f} {market}-base"
+        self.logger().info(
+            f"TRADE #{len(self._trades)} | {side} {size:.4f} {market}-base | {verb} {counter:.4f} quote | "
+            f"tx https://solscan.io/tx/{sig}"
+        )
+
     @staticmethod
     def _eta(seconds: float) -> str:
         seconds = int(max(0, seconds))
@@ -337,54 +359,92 @@ class FutarchyTwapDefense(StrategyV2Base):
         m, s = divmod(rem, 60)
         return f"{h}h{m:02d}m" if h else f"{m}m{s:02d}s"
 
+    @staticmethod
+    def _table(rows: list) -> str:
+        return format_df_for_printout(pd.DataFrame(rows), table_format="psql")
+
     def format_status(self) -> str:
-        info = self._info or {}
+        if not self._info:
+            return "Futarchy Defense starting… waiting for the first Gateway poll."
+        info = self._info
         twap = info.get("twap") or {}
         bsym = info.get("baseSymbol", "base")
         qsym = info.get("quoteSymbol", "quote")
-        L = [f"Futarchy defense [{self._target}] - {self._phase}", f"last: {self._last_action}"]
+        now = time.time()
+        ends = twap.get("twapEndsAt", info.get("tradingEndsAt", 0))
+        win_open = bool(twap.get("windowOpen")) or now >= twap.get("twapStartsAt", 0)
+        window = (f"OPEN · {self._eta(ends - now)} left" if win_open
+                  else f"opens in {self._eta(twap.get('twapStartsAt', 0) - now)}")
+        outcome = "PASS" if twap.get("attackerWinning") else "FAIL"
+        flag = "DEFENDED" if outcome == self._target else "AT RISK"
+        thr = twap.get("thresholdPct", 0)
 
-        # The fight
-        if twap:
-            now = time.time()
-            ends = twap.get("twapEndsAt", info.get("tradingEndsAt", 0))
-            win = "OPEN" if (twap.get("windowOpen") or now >= twap.get("twapStartsAt", 0)) else "not open"
-            when = f"{self._eta(ends - now)} left" if win == "OPEN" else f"opens {self._eta(twap.get('twapStartsAt', 0) - now)}"
-            outcome = "PASS" if twap.get("attackerWinning") else "FAIL"
-            defended = "defended" if outcome == self._target else "AT RISK"
-            moved = ""
-            if self._first_margin is not None:
-                cur = Decimal(str(twap.get("lastObsMarginVsThresholdPct", 0)))
-                delta = cur - self._first_margin
-                moved = f" | moved {(-delta if self._target=='FAIL' else delta):+.2f}% since first response"
-            L.append(f"Window: {win} · {when}")
-            L.append(f"Margin: realized {twap.get('marginVsThresholdPct',0):+.2f}% | "
-                     f"sampled {twap.get('lastObsMarginVsThresholdPct',0):+.2f}% | "
-                     f"threshold +{twap.get('thresholdPct',0)}% -> outcome-now {outcome} ({defended}){moved}")
-        if info:
-            p, f = info["passPool"]["price"], info["failPool"]["price"]
-            L.append(f"Prices: pass ${p:.4f} fail ${f:.4f} (spread {((p/f-1)*100):+.2f}%)")
+        out = [
+            f"  Futarchy Defense    target={self._target}    {self._phase}",
+            f"  Proposal {info.get('proposal', '')[:8]}…    TWAP window: {window}",
+            f"  Last action: {self._last_action}",
+        ]
 
-        # Budget + pacing
+        # DECISION
+        moved = "—"
+        if self._first_margin is not None:
+            d = Decimal(str(twap.get("lastObsMarginVsThresholdPct", 0))) - self._first_margin
+            moved = f"{(-d if self._target == 'FAIL' else d):+.2f}% in our favor"
+        out.append(f"\n  DECISION  (passes if PASS TWAP beats FAIL TWAP by +{thr}%)")
+        out.append(self._table([
+            {"Signal": "Outcome if resolved now", "Value": f"{outcome}  [{flag}]"},
+            {"Signal": "Realized TWAP margin vs line", "Value": f"{twap.get('marginVsThresholdPct', 0):+.2f}%"},
+            {"Signal": "Sampled (live) margin vs line", "Value": f"{twap.get('lastObsMarginVsThresholdPct', 0):+.2f}%"},
+            {"Signal": "Moved since first response", "Value": moved},
+        ]))
+
+        # MARKETS
+        p, f = info["passPool"]["price"], info["failPool"]["price"]
+        out.append("\n  MARKETS")
+        out.append(self._table([
+            {"Market": "PASS", "Price / Spread": f"${p:.4f}"},
+            {"Market": "FAIL", "Price / Spread": f"${f:.4f}"},
+            {"Market": "pass vs fail", "Price / Spread": f"{((p / f - 1) * 100):+.2f}%"},
+        ]))
+
+        # BUDGET & PACING
         if self._base_budget is not None:
-            L.append(f"Budget: {bsym} {self._base_used:.1f}/{self._base_budget:.1f} used "
-                     f"({self._base_remaining():.1f} left) · "
-                     f"{qsym} {self._quote_used:.1f}/{self._quote_budget:.1f} ({self._quote_remaining():.1f} left)")
-            if twap:
-                bslot, qslot = self._slot_allowances(time.time(), twap.get("twapEndsAt", info.get("tradingEndsAt", 0)))
-                runway = "ok" if self._base_remaining() + self._quote_remaining() > 0 else "EXHAUSTED"
-                L.append(f"Pacing: slot allowance {bslot:.1f} {bsym} / {qslot:.1f} {qsym} · runway {runway}")
-        L.append(f"Volume: {self._responses} responses · sold {self._base_used:.1f} {self._sell_market}-base · "
-                 f"bought {self._acquired_base:.1f} {self._buy_market}-base")
+            bslot, qslot = self._slot_allowances(now, ends)
+            runway = "OK — lasts to close" if (self._base_remaining() + self._quote_remaining()) > 0 else "EXHAUSTED"
+            out.append(f"\n  BUDGET & PACING  (one slot every {self.config.deploy_interval_min} min · runway: {runway})")
+            out.append(self._table([
+                {"Asset": bsym, "Budget": f"{self._base_budget:.1f}", "Used": f"{self._base_used:.1f}",
+                 "Remaining": f"{self._base_remaining():.1f}", "This slot": f"{bslot:.1f}"},
+                {"Asset": qsym, "Budget": f"{self._quote_budget:.1f}", "Used": f"{self._quote_used:.1f}",
+                 "Remaining": f"{self._quote_remaining():.1f}", "This slot": f"{qslot:.1f}"},
+            ]))
 
-        # Payoff matrix of current position
+        # ACTIVITY
+        out.append("\n  ACTIVITY")
+        out.append(self._table([
+            {"Metric": "Responses", "Value": str(self._responses)},
+            {"Metric": f"{self._sell_market}-base sold", "Value": f"{self._base_used:.2f}"},
+            {"Metric": f"{self._buy_market}-base bought", "Value": f"{self._acquired_base:.2f}"},
+            {"Metric": "Quote spent on buys", "Value": f"{self._quote_used:.2f}"},
+        ]))
+        if self._trades:
+            recent = self._trades[-5:]
+            base_n = len(self._trades) - len(recent)
+            out.append("  Recent trades:")
+            out.append(self._table([
+                {"#": base_n + i + 1, "Side": t["side"], "Market": t["market"], "Size": f"{t['size']:.2f}",
+                 "Quote": f"{t['counter']:.2f}", "Tx": t["sig"][:8] + "…"}
+                for i, t in enumerate(recent)
+            ]))
+
+        # PAYOFF
         b = self._balances
         if b:
-            fail_umbra = b["base"] + b["fail_base"]
-            fail_usdc = b["quote"] + b["fail_quote"]
-            pass_umbra = b["base"] + b["pass_base"]
-            pass_usdc = b["quote"] + b["pass_quote"]
-            L.append("Payoff of position now:")
-            L.append(f"  if FAILS  -> {fail_umbra:.0f} {bsym} + ${fail_usdc:.0f} redeemable")
-            L.append(f"  if PASSES -> {pass_umbra:.0f} {bsym} + ${pass_usdc:.0f} redeemable")
-        return "\n".join(L)
+            out.append("\n  PAYOFF OF POSITION NOW  (conditional tokens redeem per outcome)")
+            out.append(self._table([
+                {"If proposal": "FAILS (goal)", bsym: f"{b['base'] + b['fail_base']:.0f}",
+                 qsym: f"${b['quote'] + b['fail_quote']:.0f}"},
+                {"If proposal": "PASSES", bsym: f"{b['base'] + b['pass_base']:.0f}",
+                 qsym: f"${b['quote'] + b['pass_quote']:.0f}"},
+            ]))
+        return "\n".join(out)
