@@ -116,7 +116,7 @@ anonymized_metrics_mode:
 
 # A source for rate oracle, currently ascend_ex, binance, coin_gecko, coin_cap, dexalot, evedex_perpetual, decibel_perpetual, kucoin, gate_io, coinbase_advanced_trade, cube, hyperliquid, hyperliquid_perpetual, architect_perpetual, derive, mexc
 rate_oracle_source:
-  name: gate_io
+  name: coin_gecko
 
 # A universal token which to display tokens values in, e.g. USD,EUR,BTC
 global_token:

@@ -69,6 +69,24 @@ docker exec umbra-hummingbot hbot stop --force   # stop the bot, leave container
 docker compose down                              # stop everything
 ```
 
+### Prefer the classic Hummingbot client screen?
+
+The `hbot` commands above are the robust choice — the bot runs **detached** and
+survives you closing the terminal. If you'd rather watch it in the interactive
+Hummingbot client instead:
+
+```bash
+docker exec umbra-hummingbot hbot stop --force          # stop the detached bot first (one bot per install)
+docker exec -it umbra-hummingbot ./bin/hummingbot_quickstart.py
+# password = CONFIG_PASSWORD from your .env  (run: grep CONFIG_PASSWORD .env)
+# then at the >>> prompt:
+#   start --script futarchy_twap_defense.py --conf conf_futarchy_twap_defense.yml
+#   status
+```
+
+In the client the strategy runs **inside your session** — to leave it running,
+detach with `Ctrl-P` then `Ctrl-Q` (never `exit` or `Ctrl-C`, which stop the bot).
+
 ---
 
 ## How it decides (plain English)
@@ -149,6 +167,9 @@ Then restart Gateway: `docker compose restart gateway`.
   (`docker exec umbra-hummingbot hbot ...`); it must include `docker exec umbra-hummingbot`.
 - **Nothing happens / "WATCHING"** — that's correct when you're winning. It only
   trades when threatened.
+- **`RateOracle` / Gate.IO / "retrieving rates" errors in the log** — harmless
+  background noise. That's Hummingbot's USD-price feed; the defense strategy gets
+  every price from Gateway and ignores it.
 - **Rate-limit or RPC errors in the log** — set a custom RPC (section above).
 - **Start over** — `docker compose down`, delete the `gateway-conf/`, `hummingbot-data/`,
   and `.wallet_done` files, then `./setup.sh` again.
