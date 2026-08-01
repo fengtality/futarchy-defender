@@ -1,0 +1,12 @@
+.env
+.wallet_done
+gateway-conf/
+gateway-logs/
+hummingbot-logs/
+hummingbot-data/
+conf/.password_verification
+conf/scripts/conf_futarchy_twap_defense.yml.bak
+
+# python
+__pycache__/
+*.pyc

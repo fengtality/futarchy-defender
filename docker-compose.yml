@@ -1,0 +1,42 @@
+services:
+  # MetaDAO-enabled Hummingbot Gateway (signs transactions with YOUR local wallet).
+  # Runs in HTTP/dev mode so no TLS certs are needed. Bound to localhost only.
+  gateway:
+    container_name: umbra-gateway
+    image: fengtality/umbra-gateway:latest # MetaDAO-enabled Gateway (published to Docker Hub)
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:15888:15888" # host loopback only — not reachable from your network
+    volumes:
+      - ./gateway-conf:/home/gateway/conf
+      - ./gateway-logs:/home/gateway/logs
+    environment:
+      - DEV=true # HTTP mode (no certificates)
+      - GATEWAY_BIND_ADDRESS=0.0.0.0 # inside the container; host still publishes on loopback only
+      - GATEWAY_PASSPHRASE=${GATEWAY_PASSPHRASE} # encrypts your local wallet keystore
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:15888/',r=>process.exit(r.statusCode===200?0:1)).on('error',()=>process.exit(1))"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Stock Hummingbot — the strategy runs via the non-interactive `hbot` CLI.
+  # The container stays idle; YOU start/stop the bot with `hbot` (see README).
+  # The strategy file is mounted in; no custom image needed.
+  hummingbot:
+    container_name: umbra-hummingbot
+    image: hummingbot/hummingbot:latest
+    restart: unless-stopped
+    depends_on:
+      gateway:
+        condition: service_healthy
+    volumes:
+      - ./scripts:/home/hummingbot/scripts
+      - ./conf:/home/hummingbot/conf
+      - ./hummingbot-logs:/home/hummingbot/logs
+      - ./hummingbot-data:/home/hummingbot/data
+    environment:
+      - HBOT_PASSWORD=${CONFIG_PASSWORD} # lets `hbot` unlock the keystore non-interactively
+      # Put the hummingbot conda env on PATH so `docker exec umbra-hummingbot hbot ...` just works
+      - PATH=/opt/conda/envs/hummingbot/bin:/usr/local/bin:/usr/bin:/bin
+    command: tail -f /dev/null # keep the container alive; you drive it with `hbot` commands
