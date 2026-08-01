@@ -42,50 +42,46 @@ cd umbra-defense
 It will:
 - generate local secrets (kept in `.env`, never shared),
 - start Gateway,
+- ask for a **Helius API key or custom RPC URL** (optional — blank uses the public RPC),
 - ask for your **private key** and import it (stays on your machine, encrypted),
 - ask how much **UMBRA / USDC** to commit,
 - start Hummingbot.
 
-**3. Start the defense**
+**3. Open the Hummingbot client and start the defense**
 
 ```bash
-docker exec umbra-hummingbot hbot start conf_futarchy_twap_defense.yml
-```
-
-**4. Watch it**
-
-```bash
-docker exec umbra-hummingbot hbot status     # the live board (run it any time)
-docker exec umbra-hummingbot hbot logs -f     # stream the log (Ctrl-C to stop watching)
-```
-
-The `status` board shows the fight (TWAP margin vs the pass line), your budget and
-runway, and the **payoff matrix** — what your position redeems to *if it fails* vs
-*if it passes*.
-
-**Stop:**
-```bash
-docker exec umbra-hummingbot hbot stop --force   # stop the bot, leave containers up
-docker compose down                              # stop everything
-```
-
-### Prefer the classic Hummingbot client screen?
-
-The `hbot` commands above are the robust choice — the bot runs **detached** and
-survives you closing the terminal. If you'd rather watch it in the interactive
-Hummingbot client instead:
-
-```bash
-docker exec umbra-hummingbot hbot stop --force          # stop the detached bot first (one bot per install)
 docker exec -it umbra-hummingbot ./bin/hummingbot_quickstart.py
-# password = CONFIG_PASSWORD from your .env  (run: grep CONFIG_PASSWORD .env)
-# then at the >>> prompt:
-#   start --script futarchy_twap_defense.py --conf conf_futarchy_twap_defense.yml
-#   status
 ```
+- Enter the password when prompted — it's the `CONFIG_PASSWORD` the wizard printed
+  (also in `.env`: run `grep CONFIG_PASSWORD .env`).
+- At the `>>>` prompt:
+  ```
+  start --script futarchy_twap_defense.py --conf conf_futarchy_twap_defense.yml
+  status
+  ```
 
-In the client the strategy runs **inside your session** — to leave it running,
-detach with `Ctrl-P` then `Ctrl-Q` (never `exit` or `Ctrl-C`, which stop the bot).
+`status` shows the fight (TWAP margin vs the pass line), your budget and runway, and
+the **payoff matrix** — what your position redeems to *if it fails* vs *if it passes*.
+
+**4. Leave it running / stop**
+
+- To keep it running but step away: detach with **`Ctrl-P` then `Ctrl-Q`**. Do **not**
+  type `exit` or press `Ctrl-C` — with the client the strategy runs *inside your
+  session*, so those stop the bot.
+- To stop everything: `docker compose down`.
+
+### Advanced: run detached with the `hbot` CLI
+
+The client ties the bot to your terminal session. To run it **detached** so it
+survives closing the terminal (better for the full 48h window):
+
+```bash
+docker exec umbra-hummingbot hbot start conf_futarchy_twap_defense.yml   # start detached
+docker exec umbra-hummingbot hbot status                                 # check any time
+docker exec umbra-hummingbot hbot logs -f                                 # stream logs
+docker exec umbra-hummingbot hbot stop --force                           # stop the bot
+```
+Only one bot runs per install — stop one method before starting the other.
 
 ---
 
@@ -130,8 +126,8 @@ the symbol resolves automatically, and the strategy uses Gateway's default walle
 
 ## Use your own RPC endpoint (recommended if you see rate-limit errors)
 
-By default Gateway uses the free public Solana RPC, which can be slow or rate-limited.
-After the first `./setup.sh` (which creates `gateway-conf/`), pick **one**:
+`./setup.sh` **asks** for a Helius API key or a custom RPC URL — the easiest way to
+set this. To change it later, edit the config and restart Gateway.
 
 **Option A — any custom RPC URL (simplest).** A Helius URL works directly here.
 Edit `gateway-conf/chains/solana/mainnet-beta.yml`:

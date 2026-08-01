@@ -10,3 +10,4 @@ conf/scripts/conf_futarchy_twap_defense.yml.bak
 # python
 __pycache__/
 *.pyc
+.rpc_done

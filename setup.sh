@@ -33,7 +33,35 @@ done
 printf "\n"
 [ "${ready:-}" = "1" ] || { err "Gateway did not start. Check: docker compose logs gateway"; exit 1; }
 
-# 3. Import YOUR wallet (stays local, encrypted inside Gateway)
+# 3. Solana RPC endpoint (public by default; a private one avoids rate limits)
+SOLANA_CFG=gateway-conf/chains/solana/mainnet-beta.yml
+if [ ! -f .rpc_done ]; then
+  say "Solana RPC endpoint (recommended, optional)"
+  echo "The free public RPC works but can be slow or rate-limited. For a smoother run,"
+  echo "paste a Helius API key (free at helius.dev) OR a full custom RPC URL."
+  read -rp "  Helius API key or RPC URL [blank = use public RPC]: " RPC_IN
+  if [ -n "${RPC_IN:-}" ] && [ -f "$SOLANA_CFG" ]; then
+    case "$RPC_IN" in
+      http*) NODE_URL="$RPC_IN" ;;
+      *)     NODE_URL="https://mainnet.helius-rpc.com/?api-key=$RPC_IN" ;;
+    esac
+    python3 - "$SOLANA_CFG" "$NODE_URL" <<'PY'
+import sys, re
+path, url = sys.argv[1:3]
+s = open(path).read()
+s = re.sub(r"^nodeURL:.*$", f"nodeURL: {url}", s, flags=re.M)
+open(path, "w").write(s)
+PY
+    say "RPC set. Restarting Gateway…"
+    docker compose restart gateway >/dev/null
+    printf "Waiting for Gateway"
+    for i in $(seq 1 40); do curl -s -m 3 "$GW/" 2>/dev/null | grep -q ok && break; printf "."; sleep 2; done
+    printf "\n"
+  fi
+  touch .rpc_done
+fi
+
+# 4. Import YOUR wallet (stays local, encrypted inside Gateway)
 say "Import your Solana wallet"
 echo "Your private key is sent ONLY to the Gateway running on THIS machine and is stored"
 echo "encrypted. It never leaves your computer. (Base58 string, e.g. from Phantom > Export.)"
@@ -71,28 +99,32 @@ open(path, "w").write(s)
 print(f"Config written: target FAIL, budget UMBRA={base} USDC={quote}")
 PY
 
-# 6. Start the Hummingbot container (stays idle; you drive it with hbot)
+# 6. Start the Hummingbot container (stays idle; you open the client to run the bot)
 say "Starting Hummingbot…"
 docker compose up -d hummingbot
+
+PW=$(grep '^CONFIG_PASSWORD=' .env | cut -d= -f2)
 
 cat <<EOF
 
 $(printf "\033[1;32m✓ Setup complete.\033[0m")
 
-Start the defense:
-  docker exec umbra-hummingbot hbot start conf_futarchy_twap_defense.yml
+$(printf "\033[1;36mStart the defense — open the Hummingbot client:\033[0m")
+  docker exec -it umbra-hummingbot ./bin/hummingbot_quickstart.py
 
-Monitor it:
-  docker exec umbra-hummingbot hbot status     # live board: margin, budget, payoff
-  docker exec umbra-hummingbot hbot logs -f     # stream logs (Ctrl-C to stop watching)
+  • When it asks for a password, paste:   $PW
+  • At the >>> prompt, run:
+      start --script futarchy_twap_defense.py --conf conf_futarchy_twap_defense.yml
+      status
+  • To leave it running, detach with:  Ctrl-P then Ctrl-Q
+    (do NOT type "exit" or press Ctrl-C — that stops the bot)
 
-Stop / change settings:
-  docker exec umbra-hummingbot hbot stop --force   # stop the bot (containers stay up)
-  # edit conf/scripts/conf_futarchy_twap_defense.yml, then hbot start again
-  docker compose down                              # stop everything
-
+Stop everything:   docker compose down
 Gateway API docs:  http://localhost:15888/docs
 
 The bot waits for the TWAP window, watches the margin, and only trades when the
 proposal drifts toward passing. It spends nothing while you're safely ahead.
+
+(Advanced: to run the bot detached so it survives closing the terminal, use the
+ hbot CLI instead — see "hbot" in README.md.)
 EOF

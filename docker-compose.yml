@@ -3,7 +3,7 @@ services:
   # Runs in HTTP/dev mode so no TLS certs are needed. Bound to localhost only.
   gateway:
     container_name: umbra-gateway
-    image: fengtality/umbra-gateway:latest # MetaDAO-enabled Gateway (published to Docker Hub)
+    image: hummingbot/gateway:feat-metadao-connector # MetaDAO-enabled Gateway
     restart: unless-stopped
     ports:
       - "127.0.0.1:15888:15888" # host loopback only — not reachable from your network
