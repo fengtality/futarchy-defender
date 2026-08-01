@@ -39,18 +39,18 @@ class FutarchyTwapDefenseConfig(StrategyV2ConfigBase):
     """
     script_file_name: str = Field(default_factory=lambda: os.path.basename(__file__))
 
-    # --- Target ---
+    # --- Target proposal ---
     network: str = Field("mainnet-beta")
-    dao: str = Field("BLkBSE96kQys7SrMioKxeMiVbeo4Ckk2Y4n1JphKxYnv", json_schema_extra={
-        "prompt": "DAO pool address", "prompt_on_new": True})
-    proposal: str = Field("8sysa3XPrvKPmUA4qoZCn9h4vp7Mb45Ynezg542nui8Q", json_schema_extra={
-        "prompt": "Proposal address", "prompt_on_new": True})
+    proposal: str = Field("", json_schema_extra={
+        "prompt": "MetaDAO proposal address", "prompt_on_new": True})
+    dao: str = Field("", json_schema_extra={
+        "prompt": "DAO pool address (blank = auto-derive from the proposal)", "prompt_on_new": False})
     target_direction: str = Field("FAIL", json_schema_extra={
         "prompt": "Outcome to defend: PASS or FAIL", "prompt_on_new": True})
 
     # --- Budget (how much to commit; 0 = all available in wallet) ---
-    base_budget: Decimal = Field(Decimal("2000"), json_schema_extra={
-        "prompt": "Max base token (e.g. UMBRA) to commit (0 = all in wallet)", "prompt_on_new": True})
+    base_budget: Decimal = Field(Decimal("0"), json_schema_extra={
+        "prompt": "Max base token to commit (0 = all in wallet)", "prompt_on_new": True})
     quote_budget: Decimal = Field(Decimal("0"), json_schema_extra={
         "prompt": "Max quote token (e.g. USDC) to commit (0 = all in wallet)", "prompt_on_new": True})
 
@@ -94,6 +94,7 @@ class FutarchyTwapDefense(StrategyV2Base):
         self._info: Optional[dict] = None
         self._balances: Optional[dict] = None
         self._wallet: Optional[str] = None  # auto-discovered from gateway's default solana wallet
+        self._dao: Optional[str] = None      # auto-derived from proposal-info (its "pool")
         self._phase = "INIT"
         self._last_action = "none yet"
 
@@ -146,6 +147,8 @@ class FutarchyTwapDefense(StrategyV2Base):
         if not info or "twap" not in info:
             raise RuntimeError(f"bad proposal-info: {info}")
         self._info = info
+        # The DAO (pool) is derived from the proposal — no need to configure it.
+        self._dao = self.config.dao or info.get("pool")
 
         if info.get("status") != "pending":
             self._phase = f"DONE ({info.get('status')})"
@@ -298,7 +301,7 @@ class FutarchyTwapDefense(StrategyV2Base):
     async def _balances_call(self, gw) -> Dict[str, Decimal]:
         owner = await self._default_wallet(gw)
         resp = await gw.api_request("get", f"{METADAO}/balance", {
-            "network": self.config.network, "dao": self.config.dao,
+            "network": self.config.network, "dao": self._dao,
             "proposal": self.config.proposal, "ownerAddress": owner,
         })
         b = resp.get("balances", {})
@@ -315,7 +318,7 @@ class FutarchyTwapDefense(StrategyV2Base):
 
     async def _swap(self, gw, market: str, side: str, amount: Decimal) -> dict:
         r = await gw.api_request("post", f"{METADAO}/execute-conditional-swap", {
-            "network": self.config.network, "dao": self.config.dao, "proposal": self.config.proposal,
+            "network": self.config.network, "dao": self._dao, "proposal": self.config.proposal,
             "market": market, "side": side, "amount": float(amount),
             "slippagePct": float(self.config.slippage_pct),
         })
@@ -329,7 +332,7 @@ class FutarchyTwapDefense(StrategyV2Base):
             self._note(f"[DRY] split {amount} {asset}")
             return
         r = await gw.api_request("post", f"{METADAO}/split-tokens", {
-            "network": self.config.network, "dao": self.config.dao, "proposal": self.config.proposal,
+            "network": self.config.network, "dao": self._dao, "proposal": self.config.proposal,
             "asset": asset, "amount": float(amount),
         })
         if not r or r.get("status") != 1:

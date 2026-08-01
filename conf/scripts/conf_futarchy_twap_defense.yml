@@ -1,11 +1,11 @@
 script_file_name: futarchy_twap_defense.py
 
-# --- Target proposal (UMBRA-004; pre-filled) ---
+# --- Target proposal (setup.sh fills these from your answers or a playbook) ---
 network: mainnet-beta
-dao: BLkBSE96kQys7SrMioKxeMiVbeo4Ckk2Y4n1JphKxYnv
-proposal: 8sysa3XPrvKPmUA4qoZCn9h4vp7Mb45Ynezg542nui8Q
-target_direction: FAIL
-# The strategy uses Gateway's default Solana wallet (the one you import) — no wallet address to set.
+proposal: PROPOSAL_PLACEHOLDER
+target_direction: TARGET_PLACEHOLDER
+# dao is auto-derived from the proposal; leave blank unless you need to override it.
+dao: ""
 
 # --- Budget (how much you commit; 0 = all in wallet). setup.sh fills these. ---
 base_budget: 0
